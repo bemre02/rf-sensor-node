@@ -73,8 +73,10 @@ rf-sensor-node/
 
 ## Nasıl devam edilir
 
-Yeni bir Cursor session'ında `docs/SESSION_KICKOFF.md` içeriğiyle başla. İlk somut iş:
-`sim/matching_lmatch.py` çalıştırıp Smith abağını görmek ve üzerine inşa etmek.
+Yeni bir Cursor session'ında **ilk iş `docs/DEVIR_TESLIM_PROMPT.md`'yi baştan sona oku** —
+kullanıcının kim olduğunu, birikimini, hedefini ve projeyi eksiksiz anlatır (yeni ortam eski
+repolara erişemez, tüm bağlam bu dosyadadır). Kısa özet için `docs/SESSION_KICKOFF.md`.
+İlk somut iş: `sim/matching_lmatch.py` çalıştırıp Smith abağını görmek ve üzerine inşa etmek.
 
 ---
 *Bu iskelet, planlama oturumunda hazırlandı. Kararlar `docs/SESSION_KICKOFF.md`'de özetlidir.*

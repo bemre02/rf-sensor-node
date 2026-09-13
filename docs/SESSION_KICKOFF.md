@@ -1,7 +1,8 @@
 # RF Sensor Node — Session Kickoff (Aktarım Brief'i)
 
-> Bu dosyayı yeni bir Cursor session'ının ilk mesajında referans ver; bağlamı sıfırdan
-> anlatmana gerek kalmaz. (DEVAM_PROMPT tarzı handoff.)
+> Bu KISA özettir. **Tam ve detaylı devir-teslim için `docs/DEVIR_TESLIM_PROMPT.md`'yi oku**
+> (kullanıcının profili, birikimi, RF müfredatı, kaynaklar dahil). Yeni ortam eski repolara
+> erişemediği için tüm bağlam o dosyadadır. (DEVAM_PROMPT tarzı handoff.)
 
 ## Kim
 2. sınıf İTÜ Elektronik ve Haberleşme Müh. öğrencisi (Burak Emre). İleri seviye STM32
