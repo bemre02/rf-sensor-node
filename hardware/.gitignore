@@ -1,0 +1,11 @@
+# Altium üretilen/geçici dosyalar
+History/
+__Previews/
+Project Logs*/
+Project Outputs*/
+outputs/
+*.SchDocPreview
+*.PcbDocPreview
+*.PrjPcbStructure
+*.~*
+~$*

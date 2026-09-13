@@ -1,0 +1,23 @@
+# Python / sim
+__pycache__/
+*.pyc
+.venv/
+venv/
+sim/out/
+
+# Derleme / gömülü çıktılar
+build/
+Debug/
+Release/
+*.o
+*.elf
+*.bin
+*.hex
+*.map
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
