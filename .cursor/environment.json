@@ -1,0 +1,4 @@
+{
+  "name": "rf-sensor-node",
+  "install": "bash .cursor/install.sh"
+}
