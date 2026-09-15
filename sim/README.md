@@ -12,14 +12,27 @@ RF ön-ucunu **ekranda** tasarlayıp doğruladığımız yer. Alet almadan öğr
 ## Kurulum (scikit-rf)
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python matching_lmatch.py
+python matching_lmatch.py            # PNG uret (sim/out/)
+python matching_lmatch.py --show     # grafik penceresi ac (interaktif)
 ```
 
+## Kullanım (komut satırı)
+Dosyayı düzenlemeden parametre verebilirsin:
+```bash
+python matching_lmatch.py --zl 40-30j        # kompleks anten empedansı
+python matching_lmatch.py --zl 15            # dirençsel yük
+python matching_lmatch.py --zl 80 --show     # RL>Z0 (topoloji ters) + pencere
+python matching_lmatch.py --f0 433e6         # farklı frekans (433 MHz)
+python matching_lmatch.py --help             # tüm seçenekler
+```
+Öne çıkan seçenekler: `--zl R+Xj`, `--z0`, `--f0`, `--fmin/--fmax/--points`, `--show`, `--no-save`.
+
 ## Dosyalar
-- `matching_lmatch.py` — İLK GÖREV: 868 MHz'de L-match tasarımı + Smith + S11. Başlangıç
-  noktası; üzerine kompleks anten empedansı, high-pass L-match, Pi/T varyantları eklenecek.
+- `matching_lmatch.py` — L-match tasarım/görselleştirme aracı: (kompleks) yük empedansını
+  50 Ω'a uyumlar, topolojiyi otomatik seçer, ideal↔E12 farkını S11 + Smith'te kıyaslar.
+  Sıradaki: eleman Q/SRF (kayıplı model / `.s2p`), high-pass L-match, Pi/T varyantları.
 - `requirements.txt` — bağımlılıklar.
 
 ## Öğrenme köprüsü
