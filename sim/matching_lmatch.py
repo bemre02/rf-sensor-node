@@ -1,12 +1,16 @@
 """
-İLK GÖREV — 868 MHz'de L-match tasarımı + Smith abağı + S11 (dönüş kaybı).
+868 MHz L-match tasarimi: KOMPLEKS yuk + otomatik E12 yuvarlama + Smith/S11.
 
-Amaç: Empedans uyumlamayı (matching) "ekranda" görmek. CAN/USB'deki empedans-uyumsuzluğu
-sezgisinin (120 Ohm sonlandirma -> yansima yok) RF'teki karsiligi budur: kaynagi (50 Ohm)
-yuke (anten) uydurup yansimayi (S11) minimuma cekmek.
+Bu betik, ilk surumun genisletilmis halidir. Onceki surum yalnizca dirensel bir
+yuku (RL=15 Ohm) uyumluyordu. Bu surum:
+  - KOMPLEKS anten empedansini (ZL = R + jX) uyumlar; yukun reaktansini seri
+    elemanda "yutar",
+  - RL<Z0 ve RL>Z0 durumlari icin dogru L-match topolojisini otomatik secer,
+  - ideal L/C degerlerini en yakin E12 standart degerine yuvarlar ve ideal ile
+    E12'yi ayni grafikte kiyaslar (gerceklikte dip siglasir ve kayar).
 
-Bu betik BASLANGIC noktasidir. Once dirensel bir yuk (temiz ders kitabi ornegi) uydurulur.
-Sonraki adimlar (TODO): kompleks anten empedansi, high-pass L-match, Pi/T varyantlari.
+CAN sezgisi koprusu: uyumsuz yuk -> yansima (S11). Matching, yansimayi tek bir
+frekansta (868 MHz) L/C ile sifira cekmektir. Smith abagi bu donusumun haritasi.
 
 Calistir:  pip install -r requirements.txt  &&  python matching_lmatch.py
 Ciktilar sim/out/ altina PNG olarak kaydedilir.
@@ -15,7 +19,7 @@ Ciktilar sim/out/ altina PNG olarak kaydedilir.
 import os
 import numpy as np
 import matplotlib
-matplotlib.use("Agg")  # headless: ekran olmadan da PNG uretir
+matplotlib.use("Agg")  # headless: ekran olmadan PNG uretir
 import matplotlib.pyplot as plt
 import skrf as rf
 from skrf.media import DefinedGammaZ0
@@ -23,77 +27,139 @@ from skrf.media import DefinedGammaZ0
 # ----------------------------------------------------------------------------
 # 1) Hedef parametreler
 # ----------------------------------------------------------------------------
-F0 = 868e6           # calisma frekansi [Hz]
-Z0 = 50.0            # sistem empedansi [Ohm]
-RL = 15.0            # ornek anten direnci [Ohm] (RL < Z0). TODO: gercek/kompleks ZL kullan.
+F0 = 868e6            # calisma frekansi [Hz]
+Z0 = 50.0             # sistem empedansi [Ohm]
+# Yuk artik KOMPLEKS olabilir: ZL = R + jX. Ornek: kucuk bir anten ~ 40 - j30 Ohm
+# (dirensel + kapasitif). Saf dirensel ders ornegi icin: ZL = 15 + 0j.
+ZL = 40.0 - 30.0j
 
 w0 = 2 * np.pi * F0
 
 # ----------------------------------------------------------------------------
-# 2) Alcak-geciren L-match (50 Ohm -> RL, RL < Z0)
-#    Kaynak (yuksek-Z) tarafinda SUNT eleman, yuk (dusuk-Z) tarafinda SERI eleman.
-#    Sunt C + seri L  ->  ayni zamanda biraz harmonik filtreleme saglar.
+# 2) E12 standart deger serisi ve "en yakin" secim
+#    Gercek dunyada 4.201 nH satin alinamaz; en yakin standart degere yuvarlanir.
 # ----------------------------------------------------------------------------
-Q = np.sqrt(Z0 / RL - 1.0)
-Xs = Q * RL          # seri reaktans (yuk tarafi)
-Xp = Z0 / Q          # sunt reaktans (kaynak tarafi)
+E12 = np.array([1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2])
 
-Ls = Xs / w0                 # seri indüktör [H]
-Cp = 1.0 / (w0 * Xp)         # sunt kondansator [F]
-
-print("=" * 56)
-print(f"L-match  |  f0={F0/1e6:.1f} MHz  Z0={Z0:.0f}Ω  RL={RL:.0f}Ω")
-print("-" * 56)
-print(f"Q  = {Q:.3f}")
-print(f"Seri  L (yuk tarafi)   = {Ls*1e9:6.2f} nH   (Xs={Xs:5.1f}Ω)")
-print(f"Sunt  C (kaynak tarafi)= {Cp*1e12:6.2f} pF   (Xp={Xp:5.1f}Ω)")
-print("=" * 56)
+def en_yakin_e12(x):
+    """x'e en yakin E12 degerini dondurur (tum decade'ler taranir)."""
+    dec = 10.0 ** np.floor(np.log10(x))
+    aday = np.concatenate([E12 * dec / 10, E12 * dec, E12 * dec * 10])
+    return float(aday[np.argmin(np.abs(aday - x))])
 
 # ----------------------------------------------------------------------------
-# 3) scikit-rf ile devreyi kur ve dogrula
+# 3) Genel L-match tasarimi (kompleks yuk + topoloji secimi)
+#    Kural: sunt eleman DIRENCI BUYUK olan tarafa, seri eleman KUCUK olan tarafa.
+# ----------------------------------------------------------------------------
+def tasarla_lmatch(ZL, Z0):
+    """ZL yukunu Z0'a uyumlayan iki elemanli L-match'i hesaplar.
+    Donen 'seri'/'sunt': ('L'|'C', deger) ciftleri. Isaret pozitifse eleman
+    bir indukturdur (L), negatifse kondansatordur (C)."""
+    RL, XL = ZL.real, ZL.imag
+    if RL <= Z0:
+        # Yuk kucuk (RL<=Z0): sunt eleman kaynakta, seri eleman yukte.
+        Q = np.sqrt(Z0 / RL - 1.0)
+        X_seri = Q * RL - XL      # seri kolun net reaktansi; yukun XL'ini yutar
+        B_sunt = Q / Z0           # sunt kolun susseptansi (+ -> kondansator)
+        topoloji = "sunt@kaynak -> seri@yuk"
+    else:
+        # Yuk buyuk (RL>Z0): roller ters. Admittans uzerinden coz.
+        GL = RL / (RL**2 + XL**2)
+        BL = -XL / (RL**2 + XL**2)
+        Btot = np.sqrt(GL * (1.0 / Z0 - GL))
+        B_sunt = Btot - BL
+        X_seri = Btot * Z0 / GL
+        Q = np.sqrt(RL / Z0 - 1.0)
+        topoloji = "seri@kaynak -> sunt@yuk"
+
+    seri = ('L', X_seri / w0) if X_seri >= 0 else ('C', -1.0 / (w0 * X_seri))
+    sunt = ('C', B_sunt / w0) if B_sunt >= 0 else ('L', -1.0 / (w0 * B_sunt))
+    return dict(Q=Q, seri=seri, sunt=sunt, topoloji=topoloji, RL=RL)
+
+# ----------------------------------------------------------------------------
+# 4) scikit-rf devre kurucu
 # ----------------------------------------------------------------------------
 freq = rf.Frequency(700, 1050, 701, unit="mhz")
 media = DefinedGammaZ0(frequency=freq, z0=Z0)
 
-# Dirensel yuk -> yansima katsayisi (Z0'a gore)
-gamma_L = (RL - Z0) / (RL + Z0)
-load = media.load(gamma_L)
+def _seri(t, v):
+    return media.inductor(v) if t == 'L' else media.capacitor(v)
 
-# Kaynaktan yuke: SUNT C  ->  SERI L  ->  YUK
-network = media.shunt_capacitor(Cp) ** media.inductor(Ls) ** load
-network.name = "L-match + RL"
+def _sunt(t, v):
+    return media.shunt_inductor(v) if t == 'L' else media.shunt_capacitor(v)
 
-# f0'da donus kaybi
-s11_f0_db = 20 * np.log10(np.abs(network[f"{F0/1e6:.0f}mhz"].s[0, 0, 0]))
-print(f"f0'da |S11| = {s11_f0_db:6.2f} dB  (ne kadar negatif, o kadar iyi uyum)")
-print("Not: dip tam f0'da mi? Degilse L/C degerlerini/round'u gozden gecir.\n")
+def kur_devre(tas, ZL, isim):
+    """Tasarimi bir scikit-rf Network'e cevirir (dogru eleman sirasiyla)."""
+    gamma_L = (ZL - Z0) / (ZL + Z0)     # yukun yansima katsayisi
+    load = media.load(gamma_L)
+    if tas['RL'] <= Z0:
+        net = _sunt(*tas['sunt']) ** _seri(*tas['seri']) ** load
+    else:
+        net = _seri(*tas['seri']) ** _sunt(*tas['sunt']) ** load
+    net.name = isim
+    return net
+
+def bicim(t, v):
+    return f"{v*1e9:.2f} nH" if t == 'L' else f"{v*1e12:.2f} pF"
+
+def s11_f0_db(net):
+    return 20 * np.log10(np.abs(net[f"{F0/1e6:.0f}mhz"].s[0, 0, 0]))
 
 # ----------------------------------------------------------------------------
-# 4) Grafikler: S11(dB) ve Smith
+# 5) Tasarla -> E12'ye yuvarla -> yazdir
+# ----------------------------------------------------------------------------
+tas = tasarla_lmatch(ZL, Z0)
+st, sv = tas['seri']
+ut, uv = tas['sunt']
+
+# Ideal degerlerin E12'ye yuvarlanmis kopyasi
+sv_e = en_yakin_e12(sv * 1e9) * 1e-9 if st == 'L' else en_yakin_e12(sv * 1e12) * 1e-12
+uv_e = en_yakin_e12(uv * 1e9) * 1e-9 if ut == 'L' else en_yakin_e12(uv * 1e12) * 1e-12
+tas_e = dict(tas, seri=(st, sv_e), sunt=(ut, uv_e))
+
+net_ideal = kur_devre(tas, ZL, "ideal")
+net_e12 = kur_devre(tas_e, ZL, "E12")
+
+print("=" * 60)
+print(f"Yuk ZL = {ZL.real:.0f} {'+' if ZL.imag >= 0 else '-'} j{abs(ZL.imag):.0f} Ohm"
+      f"   f0={F0/1e6:.0f} MHz   Z0={Z0:.0f} Ohm")
+print(f"Topoloji: {tas['topoloji']}   Q={tas['Q']:.3f}")
+print("-" * 60)
+print(f"IDEAL : seri {st}={bicim(st, sv)}   sunt {ut}={bicim(ut, uv)}")
+print(f"E12   : seri {st}={bicim(st, sv_e)}   sunt {ut}={bicim(ut, uv_e)}")
+print("-" * 60)
+print(f"f0'da S11:  ideal={s11_f0_db(net_ideal):7.1f} dB   E12={s11_f0_db(net_e12):7.1f} dB")
+print("Not: ideal cok derin (idealize); E12 gercekci -> siglasir ve biraz kayar.")
+print("=" * 60)
+
+# ----------------------------------------------------------------------------
+# 6) Grafikler: S11(dB) ve Smith (ideal vs E12)
 # ----------------------------------------------------------------------------
 outdir = os.path.join(os.path.dirname(__file__), "out")
 os.makedirs(outdir, exist_ok=True)
 
 plt.figure()
-network.plot_s_db(m=0, n=0)
+net_ideal.plot_s_db(m=0, n=0, label=f"ideal ({bicim(st, sv)} / {bicim(ut, uv)})")
+net_e12.plot_s_db(m=0, n=0, label=f"E12 ({bicim(st, sv_e)} / {bicim(ut, uv_e)})")
 plt.axvline(F0, color="k", ls="--", lw=0.8)
-plt.title("Donus kaybi S11 (dB)")
+plt.title("Donus kaybi S11 - ideal vs E12")
 plt.grid(True)
+plt.legend()
 plt.savefig(os.path.join(outdir, "s11_db.png"), dpi=130, bbox_inches="tight")
 
 plt.figure()
-network.plot_s_smith(m=0, n=0, draw_labels=True)
-plt.title("Smith abagi (girise bakan empedans)")
+net_ideal.plot_s_smith(m=0, n=0, draw_labels=True, label="ideal")
+net_e12.plot_s_smith(m=0, n=0, label="E12")
+plt.title("Smith abagi - ideal vs E12")
+plt.legend()
 plt.savefig(os.path.join(outdir, "smith.png"), dpi=130, bbox_inches="tight")
 
 print(f"Grafikler kaydedildi: {outdir}/s11_db.png , {outdir}/smith.png")
 
 # ----------------------------------------------------------------------------
-# TODO (yeni session'da AI ile birlikte):
-#  - RL yerine KOMPLEKS anten empedansi ZL = R + jX kullan (once L'nin reaktansini yut).
-#  - Alcak-geciren yerine YUKSEK-geciren L-match (seri C + sunt L) varyantini ekle ve kiyasla.
-#  - Pi ve T eslesme aglari (ekstra serbestlik derecesi, bant genisligi kontrolu).
-#  - Komponentleri E12/E24 standart degerlere yuvarla, tekrar simule et (gercekci).
-#  - Kondansator/indüktör self-rezonans (SRF) ve Q etkisini modele kat.
-#  - Sonuclari docs/RF_DESIGN.md'ye isle.
+# TODO (sonraki oturumlar):
+#  - Eleman Q'su ve self-rezonans (SRF): ideal L/C yerine kayipli model ya da
+#    ureticinin .s2p S-parametre dosyasi (Murata/Coilcraft) ile gercekci sim.
+#  - Yuksek-geciren L-match (seri C + sunt L) ve Pi/T aglari; bant genisligi kiyasi.
+#  - Sonuclari docs/RF_DESIGN.md'ye isle (komponent secimi + gerekce).
 # ----------------------------------------------------------------------------
