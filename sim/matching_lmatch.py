@@ -12,14 +12,22 @@ yuku (RL=15 Ohm) uyumluyordu. Bu surum:
 CAN sezgisi koprusu: uyumsuz yuk -> yansima (S11). Matching, yansimayi tek bir
 frekansta (868 MHz) L/C ile sifira cekmektir. Smith abagi bu donusumun haritasi.
 
-Calistir:  pip install -r requirements.txt  &&  python matching_lmatch.py
-Ciktilar sim/out/ altina PNG olarak kaydedilir.
+Calistir (PNG uret):        python matching_lmatch.py
+Calistir (pencere ac):      python matching_lmatch.py --show
+Ciktilar her durumda sim/out/ altina PNG olarak da kaydedilir.
 """
 
 import os
+import sys
 import numpy as np
 import matplotlib
-matplotlib.use("Agg")  # headless: ekran olmadan PNG uretir
+
+# Yerelde pencere acip interaktif gormek icin:  python matching_lmatch.py --show
+# (Smith uzerinde gezinme/zoom yapabilirsin). Bayrak yoksa headless "Agg" backend
+# ile SADECE PNG uretir (bulut/CI ortaminda ekran olmadigi icin varsayilan budur).
+GOSTER = ("--show" in sys.argv) or (os.environ.get("SIM_SHOW") == "1")
+if not GOSTER:
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import skrf as rf
 from skrf.media import DefinedGammaZ0
@@ -155,6 +163,10 @@ plt.legend()
 plt.savefig(os.path.join(outdir, "smith.png"), dpi=130, bbox_inches="tight")
 
 print(f"Grafikler kaydedildi: {outdir}/s11_db.png , {outdir}/smith.png")
+
+# Yerel interaktif mod: pencereleri ac (bulutta --show verilmez, bu satir atlanir).
+if GOSTER:
+    plt.show()
 
 # ----------------------------------------------------------------------------
 # TODO (sonraki oturumlar):
