@@ -140,6 +140,13 @@ def s11_db_f0(net: rf.Network, f0: float) -> float:
     return 20 * np.log10(np.abs(net.s[idx, 0, 0]))
 
 
+def dip_bilgi(net: rf.Network):
+    """Egrinin en derin noktasini dondurur: (frekans_MHz, S11_dB)."""
+    mag = 20 * np.log10(np.abs(net.s[:, 0, 0]))
+    i = int(np.argmin(mag))
+    return net.frequency.f[i] / 1e6, float(mag[i])
+
+
 def parse_empedans(s: str) -> complex:
     try:
         return complex(s.replace(" ", ""))
@@ -159,6 +166,10 @@ def parse_args(argv=None):
     p.add_argument("--fmin", type=float, default=None, help="Supurme alt frekans [Hz] (bos=0.8*f0)")
     p.add_argument("--fmax", type=float, default=None, help="Supurme ust frekans [Hz] (bos=1.2*f0)")
     p.add_argument("--points", type=int, default=701, help="Supurme nokta sayisi")
+    p.add_argument("--lseri", type=float, default=None,
+                   help="Seri bobini ELLE ayarla [nH] (tune deneyi; E12 uzerine yazar)")
+    p.add_argument("--csunt", type=float, default=None,
+                   help="Sont kondansatoru ELLE ayarla [pF] (tune deneyi; E12 uzerine yazar)")
     p.add_argument("--show", action="store_true", help="Grafik pencerelerini ac (interaktif)")
     p.add_argument("--no-save", action="store_true", help="PNG kaydetme")
     return p.parse_args(argv)
@@ -174,43 +185,53 @@ def main(argv=None) -> int:
     tas = tasarla_lmatch(ZL, Z0, f0)
     tas_e = yuvarla_e12(tas)
 
-    # 2) scikit-rf ortami ve iki devre (ideal + E12)
+    # Egriler: ideal + E12 (+ istege bagli ELLE ayar 'manuel')
+    egriler = [("ideal", tas), ("E12", tas_e)]
+    if args.lseri is not None or args.csunt is not None:
+        st, sv = tas_e.seri   # tune, E12 degerleri uzerinden baslar
+        ut, uv = tas_e.sunt
+        if args.lseri is not None:
+            sv = args.lseri * 1e-9
+        if args.csunt is not None:
+            uv = args.csunt * 1e-12
+        egriler.append(("manuel", Tasarim(Q=tas.Q, seri=(st, sv), sunt=(ut, uv),
+                                          topoloji=tas.topoloji, RL=tas.RL)))
+
+    # 2) scikit-rf ortami ve devreler
     freq = rf.Frequency(fmin / 1e6, fmax / 1e6, args.points, unit="mhz")
     media = DefinedGammaZ0(frequency=freq, z0=Z0)
-    net_ideal = kur_devre(media, tas, ZL, Z0, "ideal")
-    net_e12 = kur_devre(media, tas_e, ZL, Z0, "E12")
+    netler = [(isim, kur_devre(media, t, ZL, Z0, isim)) for isim, t in egriler]
 
     # 3) Konsol ozeti
     xi = ZL.imag
-    print("=" * 62)
+    print("=" * 68)
     print("  L-MATCH TASARIMI")
     print(f"  Yuk ZL = {ZL.real:.1f} {'+' if xi >= 0 else '-'} j{abs(xi):.1f} Ohm"
           f"    Z0 = {Z0:.0f} Ohm    f0 = {f0/1e6:.1f} MHz")
-    print("-" * 62)
-    print(f"  Topoloji : {tas.topoloji}")
-    print(f"  Q        : {tas.Q:.3f}")
-    print(f"  {'':11s}{'seri':>13s}{'sunt':>13s}")
-    print(f"  ideal    {bicim(tas.seri):>15s}{bicim(tas.sunt):>13s}")
-    print(f"  E12      {bicim(tas_e.seri):>15s}{bicim(tas_e.sunt):>13s}")
-    print("-" * 62)
-    print(f"  f0'da S11 : ideal = {s11_db_f0(net_ideal, f0):7.1f} dB"
-          f"    E12 = {s11_db_f0(net_e12, f0):7.1f} dB")
-    print("  (ideal idealize -> cok derin; E12 gercekci -> siglasir/kayar)")
-    print("=" * 62)
+    print(f"  Topoloji : {tas.topoloji}    Q = {tas.Q:.3f}")
+    print("-" * 68)
+    print(f"  {'egri':8s}{'seri':>11s}{'sunt':>11s}{'S11(f0)':>12s}{'dip':>18s}")
+    for (isim, t), (_, net) in zip(egriler, netler):
+        fdip, mdip = dip_bilgi(net)
+        print(f"  {isim:8s}{bicim(t.seri):>11s}{bicim(t.sunt):>11s}"
+              f"{s11_db_f0(net, f0):>9.1f} dB{mdip:>8.1f} dB@{fdip:6.1f}MHz")
+    print("=" * 68)
 
     # 4) Grafikler
+    etiket = {isim: t for isim, t in egriler}
     fig_s11 = plt.figure()
-    net_ideal.plot_s_db(m=0, n=0, label=f"ideal ({bicim(tas.seri)} / {bicim(tas.sunt)})")
-    net_e12.plot_s_db(m=0, n=0, label=f"E12 ({bicim(tas_e.seri)} / {bicim(tas_e.sunt)})")
+    for isim, net in netler:
+        t = etiket[isim]
+        net.plot_s_db(m=0, n=0, label=f"{isim} ({bicim(t.seri)}/{bicim(t.sunt)})")
     plt.axvline(f0, color="k", ls="--", lw=0.8)
-    plt.title("Donus kaybi S11 - ideal vs E12")
+    plt.title("Donus kaybi S11")
     plt.grid(True)
     plt.legend()
 
     fig_smith = plt.figure()
-    net_ideal.plot_s_smith(m=0, n=0, draw_labels=True, label="ideal")
-    net_e12.plot_s_smith(m=0, n=0, label="E12")
-    plt.title("Smith abagi - ideal vs E12")
+    for isim, net in netler:
+        net.plot_s_smith(m=0, n=0, draw_labels=(isim == "ideal"), label=isim)
+    plt.title("Smith abagi")
     plt.legend()
 
     if not args.no_save:
