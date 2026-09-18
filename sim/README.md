@@ -25,9 +25,12 @@ python matching_lmatch.py --zl 40-30j        # kompleks anten empedansı
 python matching_lmatch.py --zl 15            # dirençsel yük
 python matching_lmatch.py --zl 80 --show     # RL>Z0 (topoloji ters) + pencere
 python matching_lmatch.py --f0 433e6         # farklı frekans (433 MHz)
+python matching_lmatch.py --lseri 9.1 --csunt 1.8   # elle ayar (tune) deneyi
+python matching_lmatch.py --q 40             # kayıplı bobin modeli (Q=40) + antene ulaşan güç
 python matching_lmatch.py --help             # tüm seçenekler
 ```
-Öne çıkan seçenekler: `--zl R+Xj`, `--z0`, `--f0`, `--fmin/--fmax/--points`, `--show`, `--no-save`.
+Öne çıkan seçenekler: `--zl R+Xj`, `--z0`, `--f0`, `--fmin/--fmax/--points`, `--lseri/--csunt` (elle ayar), `--q` (bobin kaybı), `--show`, `--no-save`.
+Konsol her eğri için S11(f0), dip yeri/derinliği ve **antene ulaşan gücü** (verim) yazar.
 
 ## Dosyalar
 - `matching_lmatch.py` — L-match tasarım/görselleştirme aracı: (kompleks) yük empedansını

@@ -115,24 +115,50 @@ def bicim(el) -> str:
     return f"{v*1e9:.2f} nH" if t == 'L' else f"{v*1e12:.2f} pF"
 
 
-def kur_devre(media, tas: Tasarim, ZL: complex, Z0: float, isim: str) -> rf.Network:
-    """Tasarimi scikit-rf Network'e cevirir (topolojiye gore dogru sirayla)."""
+def kur_agi(media, tas: Tasarim, f0: float, q=None) -> rf.Network:
+    """Sadece L-match AGINI (2 kapili) kurar; yuk baglanmaz.
+
+    q verilirse SERI bobine ic direnc eklenir (Rs = w0*L/Q) -> gercek eleman kaybi.
+    Kondansator Q'su cok yuksek kabul edilip ihmal edilir; baskin kayip bobindedir.
+    """
+    w0 = 2 * np.pi * f0
+
     def _seri(el):
         t, v = el
-        return media.inductor(v) if t == 'L' else media.capacitor(v)
+        if t == 'L':
+            base = media.inductor(v)
+            return (media.resistor(w0 * v / q) ** base) if q else base
+        base = media.capacitor(v)
+        return (media.resistor(1.0 / (w0 * v * q)) ** base) if q else base
 
     def _sunt(el):
         t, v = el
         return media.shunt_inductor(v) if t == 'L' else media.shunt_capacitor(v)
 
-    gamma_L = (ZL - Z0) / (ZL + Z0)
-    load = media.load(gamma_L)
-    if tas.RL <= Z0:
-        net = _sunt(tas.sunt) ** _seri(tas.seri) ** load
-    else:
-        net = _seri(tas.seri) ** _sunt(tas.sunt) ** load
+    if tas.topoloji.startswith("sunt"):
+        return _sunt(tas.sunt) ** _seri(tas.seri)
+    return _seri(tas.seri) ** _sunt(tas.sunt)
+
+
+def kur_devre(media, tas: Tasarim, ZL: complex, Z0: float, isim: str,
+              f0: float, q=None) -> rf.Network:
+    """L-match agina anten yukunu baglayip 1 kapili Network dondurur."""
+    net = kur_agi(media, tas, f0, q) ** media.load((ZL - Z0) / (ZL + Z0))
     net.name = isim
     return net
+
+
+def antene_guc_db(media, tas: Tasarim, ZL: complex, Z0: float, f0: float, q=None) -> float:
+    """f0'da antene ulasan gucun, kaynaktan alinabilir guce oranini dB verir.
+    (Transducer kazanci; hem yansima hem kayip birlikte hesaba katilir. 0 dB = ideal.)
+    """
+    net2 = kur_agi(media, tas, f0, q)
+    gamma_L = (ZL - Z0) / (ZL + Z0)
+    idx = int(np.argmin(np.abs(net2.frequency.f - f0)))
+    s = net2.s[idx]
+    s21, s22 = s[1, 0], s[1, 1]
+    gt = (abs(s21) ** 2 * (1 - abs(gamma_L) ** 2)) / (abs(1 - s22 * gamma_L) ** 2)
+    return 10 * np.log10(gt)
 
 
 def s11_db_f0(net: rf.Network, f0: float) -> float:
@@ -170,6 +196,8 @@ def parse_args(argv=None):
                    help="Seri bobini ELLE ayarla [nH] (tune deneyi; E12 uzerine yazar)")
     p.add_argument("--csunt", type=float, default=None,
                    help="Sont kondansatoru ELLE ayarla [pF] (tune deneyi; E12 uzerine yazar)")
+    p.add_argument("--q", type=float, default=None,
+                   help="Bobin kalite faktoru Q (kayipli model; or. 40). Bos=ideal eleman")
     p.add_argument("--show", action="store_true", help="Grafik pencerelerini ac (interaktif)")
     p.add_argument("--no-save", action="store_true", help="PNG kaydetme")
     return p.parse_args(argv)
@@ -185,8 +213,10 @@ def main(argv=None) -> int:
     tas = tasarla_lmatch(ZL, Z0, f0)
     tas_e = yuvarla_e12(tas)
 
-    # Egriler: ideal + E12 (+ istege bagli ELLE ayar 'manuel')
-    egriler = [("ideal", tas), ("E12", tas_e)]
+    # Egriler listesi: (isim, tasarim, Q) ; Q=None -> kayipsiz (ideal eleman)
+    egriler = [("ideal", tas, None), ("E12", tas_e, None)]
+    if args.q is not None:
+        egriler.append(("kayipli", tas_e, args.q))   # E12 degerleri + bobin kaybi
     if args.lseri is not None or args.csunt is not None:
         st, sv = tas_e.seri   # tune, E12 degerleri uzerinden baslar
         ut, uv = tas_e.sunt
@@ -195,30 +225,37 @@ def main(argv=None) -> int:
         if args.csunt is not None:
             uv = args.csunt * 1e-12
         egriler.append(("manuel", Tasarim(Q=tas.Q, seri=(st, sv), sunt=(ut, uv),
-                                          topoloji=tas.topoloji, RL=tas.RL)))
+                                          topoloji=tas.topoloji, RL=tas.RL), None))
 
     # 2) scikit-rf ortami ve devreler
     freq = rf.Frequency(fmin / 1e6, fmax / 1e6, args.points, unit="mhz")
     media = DefinedGammaZ0(frequency=freq, z0=Z0)
-    netler = [(isim, kur_devre(media, t, ZL, Z0, isim)) for isim, t in egriler]
+    netler = [(isim, kur_devre(media, t, ZL, Z0, isim, f0, q)) for isim, t, q in egriler]
 
     # 3) Konsol ozeti
     xi = ZL.imag
-    print("=" * 68)
+    print("=" * 74)
     print("  L-MATCH TASARIMI")
     print(f"  Yuk ZL = {ZL.real:.1f} {'+' if xi >= 0 else '-'} j{abs(xi):.1f} Ohm"
           f"    Z0 = {Z0:.0f} Ohm    f0 = {f0/1e6:.1f} MHz")
     print(f"  Topoloji : {tas.topoloji}    Q = {tas.Q:.3f}")
-    print("-" * 68)
-    print(f"  {'egri':8s}{'seri':>11s}{'sunt':>11s}{'S11(f0)':>12s}{'dip':>18s}")
-    for (isim, t), (_, net) in zip(egriler, netler):
+    if args.q is not None and tas_e.seri[0] == 'L':
+        rs = 2 * np.pi * f0 * tas_e.seri[1] / args.q
+        print(f"  Bobin Q = {args.q:.0f}  ->  seri bobin ic direnci Rs = {rs:.2f} Ohm")
+    print("-" * 74)
+    print(f"  {'egri':8s}{'seri':>9s}{'sunt':>9s}{'S11@f0':>10s}"
+          f"{'dip':>15s}{'antene@f0':>13s}")
+    for (isim, t, q), (_, net) in zip(egriler, netler):
         fdip, mdip = dip_bilgi(net)
-        print(f"  {isim:8s}{bicim(t.seri):>11s}{bicim(t.sunt):>11s}"
-              f"{s11_db_f0(net, f0):>9.1f} dB{mdip:>8.1f} dB@{fdip:6.1f}MHz")
-    print("=" * 68)
+        ag = antene_guc_db(media, t, ZL, Z0, f0, q)
+        print(f"  {isim:8s}{bicim(t.seri):>9s}{bicim(t.sunt):>9s}"
+              f"{s11_db_f0(net, f0):>7.1f}dB{mdip:>6.1f}@{fdip:4.0f}MHz{ag:>10.2f}dB")
+    print("=" * 74)
+    print("  Not: 'antene@f0' = kaynaktan cikan gucun ne kadari antene ulasti (0 dB=ideal).")
+    print("       S11 derin gorunse de kayipli agda guc antene degil isiya gidebilir!")
 
     # 4) Grafikler
-    etiket = {isim: t for isim, t in egriler}
+    etiket = {isim: t for isim, t, _q in egriler}
     fig_s11 = plt.figure()
     for isim, net in netler:
         t = etiket[isim]
